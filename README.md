@@ -7,7 +7,7 @@ README file for SweeperBot
 1. [Introduction](#introduction)
 1. [Features](#features)
 1. [Dependencies](#dependencies)
-1. [Installation](#installation)
+1. [Setup](#setup)
 
 # Introduction
 
