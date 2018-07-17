@@ -15,8 +15,8 @@ This is SweeperBot, a (slightly RPG themed) Discord bot that automatically remov
 
 # Features
 
-- `!say_hi` - Introduces bot to guild. 
-- `!clean_channel` - Cleans the channel the command was run in.
+- `!s say_hi` - Introduces bot to guild. 
+- `!s clean_channel` - Cleans the channel the command was run in.
 
 # Dependencies
 
