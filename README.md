@@ -5,9 +5,9 @@ README file for SweeperBot
 
 **Contents:**
 1. [Introduction](#introduction)
-1. [Features](#features)
-1. [Dependencies](#dependencies)
-1. [Setup](#setup)
+2. [Features](#features)
+3. [Dependencies](#dependencies)
+4. [Setup](#setup)
 
 # Introduction
 
@@ -15,8 +15,25 @@ This is SweeperBot, a (slightly RPG themed) Discord bot that automatically remov
 
 # Features
 
-- `!s say_hi` - Introduces bot to guild. 
-- `!s clean_channel` - Cleans the channel the command was run in.
+- `!s help`
+	- Displays a list of the commands and their descriptions.
+- `!s say_hi`
+	- Does a self introduction.
+- `!s clean_channel`
+	- Cleans the channel the command was run in.
+- `!s auto_clean channels #channel_name for_messages older_than x time`
+	- Automatically removes messages that are older than x time from #channel_name.
+	- e.g. `!s auto_clean channels #channel_one #channel_two for_messages older_than 1 hour 30 minutes`
+	- This command accepts one or more channels.
+	- Valid time parameters are second(s), minute(s), hour(s), day(s), week(s), month(s) and year(s).
+	- Decimals, specifically any _real number_, may be used.
+	- The interval of time is resolved to the closest second and is artificially capped to one year.
+-  `!s auto_clean_remove channels #channel_name for_messages older_than x time`
+	- Removes specified scheduled auto_clean tasks.
+	- e.g. `!s auto_clean_remove channels #channel_one #channel_two for_messages older_than 1 hour 30 minutes`
+	- This command accepts anything that the command auto_clean accepts.
+	- It doesn't matter how you describe the interval of time - as long as the specified interval for older_than matches the auto_clean task you want to remove, it will be removed.
+		- i.e. older_than 1 hour = older_than 60 minutes as the interval of time is the same.
 
 # Dependencies
 
