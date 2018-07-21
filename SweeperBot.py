@@ -12,9 +12,112 @@ authentication_token = open('authentication_token.txt').readline().strip()
 # Instantiate client
 sweeper_bot = commands.Bot(command_prefix = '!s ')
 
-def convenient_check(object_to_check):
+def convenient_check(*args):
     """ Print type and str representation of object. """
-    print(type(object_to_check), object_to_check)
+    for arg in args:
+        print(type(arg), '\n\t', arg, '\n', sep='')
+
+def is_valid_float(test_string):
+    try:
+        float(test_string)
+    except:
+        return False
+    return True
+
+def parse_arguments(ctx, argument_type):
+    """ Parse arguments and return them in a dictionary """
+    command_tokens = ctx.message.content[len(ctx.prefix):].split()[1:]
+    command_arguments = {}
+
+    # Extract layout
+    previous_parameter = None
+    for token in command_tokens:
+        # All parameters have arguments not just solo
+        if token.lower() in ['channels', 'for_messages', 'older_than']:
+            previous_parameter = token.lower()
+        elif previous_parameter != None:
+            if previous_parameter in command_arguments:
+                command_arguments[previous_parameter] += str(
+                        token.lower() + ' ' )
+            else:
+                command_arguments[previous_parameter] = str(
+                        token.lower() + ' ')
+        else:
+            raise commands.BadArgument()
+
+    # Extract channels
+    matches = re.findall(r'<#([0-9]+)>', command_arguments['channels'])
+    command_arguments['channels'] = []
+
+    if not matches:
+        raise commands.MissingRequiredArgument()
+
+    for match in matches:
+        # Get channel object
+        channel = sweeper_bot.get_channel(int(match))
+        if channel:
+            command_arguments['channels'] += [channel]
+        else:
+            raise commands.BadArgument()
+
+    # Extract interval
+    interval = 0
+
+    matches = re.findall(
+            r"(([0-9]+\s(year|month|day|hour|minute|second)s?))+",
+            command_arguments['older_than'])
+
+    if not matches:
+        raise commands.MissingRequiredArgument
+    
+    for match in matches:
+        quantity, unit = match[0].split()
+        
+        if is_valid_float(quantity):
+            quantity = abs(float(quantity))
+        else:
+            raise commands.BadArgument()
+    
+        if unit in ['second', 'seconds']:
+            interval += quantity
+        elif unit in ['minute', 'minutes']:
+            interval += 60 * quantity
+        elif unit in ['hour', 'hours']:
+            interval += 60 * 60 * quantity
+        elif unit in ['day', 'days']:
+            interval += 24 * 60 * 60 * quantity
+        elif unit in ['week', 'weeks']:
+            interval += 7 * 24 * 60 * 60 * quantity
+        elif unit in ['month', 'months']:
+            interval += 30 * 24 * 60 * 60 * quantity
+        elif unit in ['year', 'years']:
+            interval += 365 * 24 * 60 * 60 * quantity
+        else:
+            raise commands.BadArgument()
+    
+        # Limit interval to a year inclusive
+        interval = round(interval)
+        if interval <= 365 * 24 * 60 * 60:
+            command_arguments['older_than'] = interval
+        else:
+            raise commands.BadArgument()
+
+    return command_arguments
+
+async def long_sleep(interval):
+    """ Basically asyncio.sleep() without time limits """
+    #_max_timeout = 2147483.5
+    max_timeout = 3600 * 24
+
+    interval_remaining = interval
+    while interval_remaining >= 0:
+        if interval_remaining >= max_timeout:
+            timeout = max_timeout
+            interval_remaining -= max_timeout
+        else:
+            timeout = interval_remaining
+            interval_remaining -= max_timeout
+        await asyncio.sleep(timeout)
 
 async def load_scheduled_tasks():
     """ Loads deletion schedules from sqlite database. """
@@ -28,25 +131,60 @@ async def remove_scheduled_task():
     """ Remove task from sqlite database. """
     pass
 
-async def add_task_to_queue():
+async def add_task_to_queue(future, task_arguments):
     """ Adds deletion task to bot's queue. """
-    pass
+    interval = datetime.timedelta(seconds=task_arguments[2])
 
-async def remove_task_from_queue():
-    """ Removes deletion task from bot's queue. """
-    pass
+    # Need to implement sleep till next closest message
+    await long_sleep(2)
 
-async def check_permissions(ctx):
-    print("Didn't check permissions.")
+    await clear_history(task_arguments[1], -interval)
+
+    future.set_result(task_arguments)
+
+def requeue_task(returned_future):
+    """ Callback function that requeues add_task_to_queue """
+    task_arguments = returned_future.result()
+
+    future = asyncio.Future()
+    future.add_done_callback(requeue_task)
+    task = asyncio.ensure_future(
+            add_task_to_queue(future, task_arguments))
+    sweeper_bot.scheduled_tasks[task_arguments] = task
+    
+def remove_task_from_queue(task_arguments):
+    """ Remove deletion task from bot's queue. """
+    task = sweeper_bot.scheduled_tasks[task_arguments]
+    task.cancel()
+
+    del sweeper_bot.scheduled_tasks[task_arguments]
+    print(f"Sucessfully removed deletion task {task_arguments} from queue")
+
+def check_user_permissions(channel, user, **permissions):
+    """ Check if the user has the permissions for the channel """
+    # Check user permissions
+    channel_permissions = channel.permissions_for(user)
+    missing_permissions = [p for p, v in permissions.items()
+            if getattr(channel_permissions, p, None) != v]
+    if missing_permissions:
+        raise commands.MissingPermissions(missing_permissions)
+
     return True
 
-async def get_channel_id_by_name(ctx, channel_name):
-    """ Returns the id of a channel of the same name """
-    pass
+def check_bot_permissions(channel, bot, **permissions):
+    """ Check if the bot has the permissions for the channel """
+    # Check bot permissions
+    channel_permissions = channel.permissions_for(bot)
+    missing_permissions = [p for p, v in permissions.items()
+            if getattr(channel_permissions, p, None) != v]
+    if missing_permissions:
+        raise commands.BotMissingPermissions(missing_permissions)
+
+    return True
 
 async def clear_history(channel, clear_before_date_delta=None):
-    """ Naive clearing of channel messages after a date given by combining a
-    date delta with utcnow. 
+    """ Naive clearing of channel messages after a date given by 
+    combining a date delta with utcnow. 
     """
     try:
         if clear_before_date_delta == None:
@@ -64,7 +202,7 @@ async def clear_history(channel, clear_before_date_delta=None):
             while True:
                 deleted = await channel.purge(
                         limit=1000,
-                        after=clear_before_date,
+                        before=clear_before_date,
                         reverse=True)
                 if len(deleted) == 0:
                     break
@@ -87,63 +225,101 @@ async def say_hi(ctx):
 
 @sweeper_bot.command()
 @commands.has_permissions(
-        read_messages=True, send_messages=True, manage_messages=True)
+        read_messages=True,
+        read_message_history=True,
+        send_messages=True,
+        manage_messages=True)
 @commands.bot_has_permissions(
-        read_messages=True, send_messages=True, manage_messages=True)
+        read_messages=True,
+        read_message_history=True,
+        send_messages=True,
+        manage_messages=True)
 async def clean_channel(ctx):
     """ Cleans the channel the command was run in. """
     await clear_history(ctx.channel)
 
 @sweeper_bot.command()
 async def auto_clean(ctx):
-    """ Cleans messages according to the conditions set by user(s).
-    Usage: auto_clean channels #channel_name for_messages older_than time
+    """ Schedule automatic cleaning of messages.
+    Usage: auto_clean channels #channel_name for_messages older_than 
+    time
     """
-    print(ctx.message.content)
-    #print(ctx.message, ctx.prefix, ctx.args, ctx.kwargs)
-    #await clear_history(channel, datetime.timedelta(days=-1))
-
-    command_tokens = ctx.message.content[len(ctx.prefix):].split()[1:]
-    command_arguments = {}
-
-    previous_parameter = None
-    for token in command_tokens:
-        # All parameters have arguments not just solo
-        if token.lower() in ['channels', 'for_messages', 'older_than']:
-            previous_parameter = token.lower()
-        elif previous_parameter != None:
-            if previous_parameter in command_arguments:
-                command_arguments[previous_parameter] += [token.lower()]
-            else:
-                command_arguments[previous_parameter] = [token.lower()]
-        else:
-            raise commands.UserInputError()
-
-    previous_token = None
-    date_arguments = {}
-    if 'older_than' in command_arguments:
-        for token in command_arguments['older_than']:
-            if previous_token:
-                previous_token = token
-                continue
-            if previous_token in ['year', 'month', 'day', 'hour', 'minute',
-                    'second']:
-                # Add keypairs
-                pass
-            elif
+    command_arguments = parse_arguments(ctx, 'schedule')
+    print(ctx.message.content, command_arguments, ctx.guild, None, sep='\n')
 
     for channel in command_arguments['channels']:
-        match = re.search(r'^<#([0-9]+)>', channel)
-        if not match:
-            raise commands.UserInputError()
-        channel_id = sweeper_bot.get_channel(eval(match[1]))
-        if not channel_id:
-            raise commands.UserInputError()
-        convenient_check(channel_id)
+        task_arguments = (ctx.guild, channel, command_arguments['older_than'])
+
+        # Check if bot and user have sufficent permissions
+        check_user_permissions(
+                channel,
+                ctx.author,
+                read_messages=True,
+                read_message_history=True,
+                send_messages=True,
+                manage_messages=True)
+        check_bot_permissions(
+                channel,
+                ctx.guild.get_member(sweeper_bot.user.id),
+                read_messages=True,
+                read_message_history=True,
+                send_messages=True,
+                manage_messages=True)
+
+        future = asyncio.Future()
+        future.add_done_callback(requeue_task)
+        task = asyncio.ensure_future(
+                add_task_to_queue(future, task_arguments))
+        sweeper_bot.scheduled_tasks[task_arguments] = task
+
+@sweeper_bot.command()
+async def auto_clean_remove(ctx):
+    """ Removes scheduled auto_clean tasks.
+    Usage: auto_clean_remove channels #channel_name for_messages
+    older_than time
+    """
+    command_arguments = parse_arguments(ctx, 'remove')
+    print(ctx.message.content, command_arguments, ctx.guild, None, sep='\n')
+
+    for channel in command_arguments['channels']:
+        task_arguments = (ctx.guild, channel, command_arguments['older_than'])
+
+        # Check if bot and user have sufficent permissions
+        check_user_permissions(
+                channel,
+                ctx.author,
+                read_messages=True,
+                read_message_history=True,
+                send_messages=True,
+                manage_messages=True)
+        check_bot_permissions(
+                channel,
+                ctx.guild.get_member(sweeper_bot.user.id),
+                read_messages=True,
+                read_message_history=True,
+                send_messages=True,
+                manage_messages=True)
+
+        remove_task_from_queue(task_arguments)
+
+@sweeper_bot.command()
+async def auto_clean_list(ctx):
+    """ Lists scheduled auto_clean tasks.
+    Usage: auto_clean_list
+    """
+    pass
 
 @sweeper_bot.event
 async def on_ready():
     print("Successfuly connected to Discord as {}".format(sweeper_bot.user))
+
+    # Confirm that 'scheduled_tasks' is empty so no overwriting occurs
+    if not 'scheduled_tasks' in sweeper_bot.__dict__:
+        sweeper_bot.scheduled_tasks = {}
+    else:
+        print("Error: 'scheduled_tasks' already exists. Please " \
+                "file a bug report.")
+        exit(1)
 
     await load_scheduled_tasks()
 
@@ -153,10 +329,13 @@ async def on_ready():
                     guild.get_member(sweeper_bot.user.id))
             if (str(channel.category).lower() == 'text channels'
                     and channel_permissions.read_messages
+                    and channel_permissions.read_message_history
                     and channel_permissions.send_messages
                     and channel_permissions.manage_messages):
                 print(type(channel), channel,
                         type(channel.category), channel.category)
+                #print('about to clear history')
+                #await clear_history(channel, -datetime.timedelta(seconds=10))
 
 @sweeper_bot.event
 async def on_command_error(ctx, error):
@@ -183,7 +362,7 @@ async def on_command_error(ctx, error):
     convenient_check(error)
     print("Caught exception in command: {}".format(ctx.message.content))
 
-print('Link スタート!')
+print('Link Start!')
 
 # A blocking call that abstracts away the event loop initialisation from you.
 sweeper_bot.run(authentication_token)
