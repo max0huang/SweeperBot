@@ -1,10 +1,11 @@
-import discord
-from discord.ext import commands
-
-import traceback
 import asyncio
 import datetime
 import re
+import sqlite3
+import traceback
+
+import discord
+from discord.ext import commands
 
 # Get authentication token from file assumed to be in same directory
 authentication_token = open('authentication_token.txt').readline().strip()
@@ -119,23 +120,66 @@ async def long_sleep(interval):
             interval_remaining -= max_timeout
         await asyncio.sleep(timeout)
 
-async def load_scheduled_tasks():
-    """ Loads deletion schedules from sqlite database. """
-    pass
+def load_scheduled_tasks():
+    """ Load scheduled tasks from sqlite database. """
+    db_con = sqlite3.connect('scheduled_tasks.db')
+    db_cur = db_con.cursor()
 
-async def save_scheduled_task():
-    """ Insert task into sqlite database. """
-    pass
+    db_cur.execute("SELECT * FROM scheduled_tasks")
+
+    entries = db_cur.fetchall()
+    for entry in entries:
+        guild_id, channel_id, older_than_interval, every_interval = entry
+
+        task_arguments = (
+                sweeper_bot.get_guild(int(guild_id)),
+                sweeper_bot.get_channel(int(channel_id)),
+                int(older_than_interval),
+                None)
+
+        future = asyncio.Future()
+        future.add_done_callback(requeue_task)
+        task = asyncio.ensure_future(
+                add_task_to_queue(future, task_arguments))
+        sweeper_bot.scheduled_tasks[task_arguments] = task
+
+    db_cur.close()
+    db_con.close()
+
+    return True
+
+def save_scheduled_task(task_arguments):
+    """ Insert scheduled task into sqlite database. """
+    for arg in task_arguments:
+        convenient_check(arg)
+
+    entry = (
+            str(task_arguments[0].id),
+            str(task_arguments[1].id),
+            str(task_arguments[2]),
+            str(None))
+    
+    db_con = sqlite3.connect('scheduled_tasks.db')
+    db_cur = db_con.cursor()
+
+    db_cur.execute("INSERT INTO scheduled_tasks VALUES (?,?,?,?)", entry)
+
+    db_con.commit()
+
+    db_cur.close()
+    db_con.close()
+
+    return True
 
 async def remove_scheduled_task():
-    """ Remove task from sqlite database. """
+    """ Remove scheduled task from sqlite database. """
     pass
 
 async def add_task_to_queue(future, task_arguments):
-    """ Adds deletion task to bot's queue. """
+    """ Add deletion task to queue. """
     interval = datetime.timedelta(seconds=task_arguments[2])
 
-    # Need to implement sleep till next closest message
+    # TODO: implement sleep till next closest message
     await long_sleep(2)
 
     await clear_history(task_arguments[1], -interval)
@@ -162,7 +206,6 @@ def remove_task_from_queue(task_arguments):
 
 def check_user_permissions(channel, user, **permissions):
     """ Check if the user has the permissions for the channel """
-    # Check user permissions
     channel_permissions = channel.permissions_for(user)
     missing_permissions = [p for p, v in permissions.items()
             if getattr(channel_permissions, p, None) != v]
@@ -173,7 +216,6 @@ def check_user_permissions(channel, user, **permissions):
 
 def check_bot_permissions(channel, bot, **permissions):
     """ Check if the bot has the permissions for the channel """
-    # Check bot permissions
     channel_permissions = channel.permissions_for(bot)
     missing_permissions = [p for p, v in permissions.items()
             if getattr(channel_permissions, p, None) != v]
@@ -245,7 +287,6 @@ async def auto_clean(ctx):
     time
     """
     command_arguments = parse_arguments(ctx, 'schedule')
-    print(ctx.message.content, command_arguments, ctx.guild, None, sep='\n')
 
     for channel in command_arguments['channels']:
         task_arguments = (ctx.guild, channel, command_arguments['older_than'])
@@ -265,6 +306,9 @@ async def auto_clean(ctx):
                 read_message_history=True,
                 send_messages=True,
                 manage_messages=True)
+
+        if not save_scheduled_task(task_arguments):
+            raise RuntimeError
 
         future = asyncio.Future()
         future.add_done_callback(requeue_task)
@@ -321,7 +365,8 @@ async def on_ready():
                 "file a bug report.")
         exit(1)
 
-    await load_scheduled_tasks()
+    if not load_scheduled_tasks():
+        raise RuntimeError
 
     for guild in sweeper_bot.guilds:
         for channel in guild.channels:
@@ -334,8 +379,6 @@ async def on_ready():
                     and channel_permissions.manage_messages):
                 print(type(channel), channel,
                         type(channel.category), channel.category)
-                #print('about to clear history')
-                #await clear_history(channel, -datetime.timedelta(seconds=10))
 
 @sweeper_bot.event
 async def on_command_error(ctx, error):
@@ -357,9 +400,6 @@ async def on_command_error(ctx, error):
     # Print default traceback for errors that have not returned
     print("Caught exception in command: {}".format(ctx.command))
     traceback.print_exception(type(error), error, error.__traceback__)
-    # DEBUG:
-    convenient_check(ctx)
-    convenient_check(error)
     print("Caught exception in command: {}".format(ctx.message.content))
 
 print('Link Start!')
