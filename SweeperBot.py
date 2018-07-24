@@ -39,7 +39,7 @@ def parse_arguments(ctx, argument_type):
         elif previous_parameter != None:
             if previous_parameter in command_arguments:
                 command_arguments[previous_parameter] += str(
-                        token.lower() + ' ' )
+                        token.lower() + ' ')
             else:
                 command_arguments[previous_parameter] = str(
                         token.lower() + ' ')
@@ -125,11 +125,12 @@ def load_scheduled_tasks():
     db_con = sqlite3.connect('scheduled_tasks.db')
     db_cur = db_con.cursor()
 
-    db_cur.execute("SELECT * FROM scheduled_tasks")
+    query = "SELECT * FROM scheduled_tasks"
+    db_cur.execute(query)
 
-    entries = db_cur.fetchall()
-    for entry in entries:
-        guild_id, channel_id, older_than_interval, every_interval = entry
+    rows = db_cur.fetchall()
+    for row in rows:
+        guild_id, channel_id, older_than_interval, every_interval = row
 
         task_arguments = (
                 sweeper_bot.get_guild(int(guild_id)),
@@ -150,10 +151,7 @@ def load_scheduled_tasks():
 
 def save_scheduled_task(task_arguments):
     """ Insert scheduled task into sqlite database. """
-    for arg in task_arguments:
-        convenient_check(arg)
-
-    entry = (
+    row = (
             str(task_arguments[0].id),
             str(task_arguments[1].id),
             str(task_arguments[2]),
@@ -162,7 +160,8 @@ def save_scheduled_task(task_arguments):
     db_con = sqlite3.connect('scheduled_tasks.db')
     db_cur = db_con.cursor()
 
-    db_cur.execute("INSERT INTO scheduled_tasks VALUES (?,?,?,?)", entry)
+    query = "INSERT INTO scheduled_tasks VALUES (?,?,?,?)"
+    db_cur.execute(query, row)
 
     db_con.commit()
 
@@ -171,9 +170,43 @@ def save_scheduled_task(task_arguments):
 
     return True
 
-async def remove_scheduled_task():
+def remove_scheduled_task(task_arguments):
     """ Remove scheduled task from sqlite database. """
-    pass
+    parameters = [
+            str(task_arguments[0].id),
+            str(task_arguments[1].id),
+            str(task_arguments[2]),
+            str(None)]
+
+    attribute_name = (
+            'guild_id',
+            'channel_id',
+            'older_than_interval',
+            'every_interval')
+
+    query = "DELETE FROM scheduled_tasks WHERE "
+    index = 0
+    for parameter in parameters:
+        if not parameter:
+            query += "{}=? AND ".format(attribute_name[index])
+        index += 1
+    query = query[:-5]
+
+    db_con = sqlite3.connect('scheduled_tasks.db')
+    db_cur = db_con.cursor()
+
+    db_cur.execute(query, parameters)
+    deleted = db_cur.rowcount
+
+    db_con.commit()
+
+    db_cur.close()
+    db_con.close()
+
+    if deleted:
+        return True
+    else:
+        raise commands.BadArguments()
 
 async def add_task_to_queue(future, task_arguments):
     """ Add deletion task to queue. """
@@ -187,7 +220,7 @@ async def add_task_to_queue(future, task_arguments):
     future.set_result(task_arguments)
 
 def requeue_task(returned_future):
-    """ Callback function that requeues add_task_to_queue """
+    """ Callback function that requeues add_task_to_queue. """
     task_arguments = returned_future.result()
 
     future = asyncio.Future()
@@ -202,7 +235,8 @@ def remove_task_from_queue(task_arguments):
     task.cancel()
 
     del sweeper_bot.scheduled_tasks[task_arguments]
-    print(f"Sucessfully removed deletion task {task_arguments} from queue")
+
+    return True
 
 def check_user_permissions(channel, user, **permissions):
     """ Check if the user has the permissions for the channel """
@@ -284,12 +318,16 @@ async def clean_channel(ctx):
 async def auto_clean(ctx):
     """ Schedule automatic cleaning of messages.
     Usage: auto_clean channels #channel_name for_messages older_than 
-    time
+    x time
     """
     command_arguments = parse_arguments(ctx, 'schedule')
 
     for channel in command_arguments['channels']:
-        task_arguments = (ctx.guild, channel, command_arguments['older_than'])
+        task_arguments = (
+                ctx.guild,
+                channel,
+                command_arguments['older_than'],
+                None)
 
         # Check if bot and user have sufficent permissions
         check_user_permissions(
@@ -320,13 +358,16 @@ async def auto_clean(ctx):
 async def auto_clean_remove(ctx):
     """ Removes scheduled auto_clean tasks.
     Usage: auto_clean_remove channels #channel_name for_messages
-    older_than time
+    older_than x time
     """
     command_arguments = parse_arguments(ctx, 'remove')
-    print(ctx.message.content, command_arguments, ctx.guild, None, sep='\n')
 
     for channel in command_arguments['channels']:
-        task_arguments = (ctx.guild, channel, command_arguments['older_than'])
+        task_arguments = (
+                ctx.guild,
+                channel,
+                command_arguments['older_than'],
+                None)
 
         # Check if bot and user have sufficent permissions
         check_user_permissions(
@@ -345,6 +386,7 @@ async def auto_clean_remove(ctx):
                 manage_messages=True)
 
         remove_task_from_queue(task_arguments)
+        remove_scheduled_task(task_arguments)
 
 @sweeper_bot.command()
 async def auto_clean_list(ctx):
