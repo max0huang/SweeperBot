@@ -187,7 +187,7 @@ def remove_scheduled_task(task_arguments):
     query = "DELETE FROM scheduled_tasks WHERE "
     index = 0
     for parameter in parameters:
-        if not parameter:
+        if parameter:
             query += "{}=? AND ".format(attribute_name[index])
         index += 1
     query = query[:-5]
